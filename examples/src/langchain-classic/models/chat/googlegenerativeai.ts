@@ -1,5 +1,5 @@
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
-import { HarmBlockThreshold, HarmCategory } from "@google/generative-ai";
+import { HarmBlockThreshold, HarmCategory } from "@google/genai";
 
 /*
  * Before running this, you should make sure you have created a

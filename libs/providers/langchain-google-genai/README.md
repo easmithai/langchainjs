@@ -1,6 +1,7 @@
 # @langchain/google-genai
 
-This package contains the LangChain.js integrations for Gemini through their generative-ai SDK.
+This package contains the LangChain.js integrations for Gemini using the
+[`@googleapis/js-genai`](https://github.com/googleapis/js-genai) SDK, published to npm as [`@google/genai`](https://www.npmjs.com/package/@google/genai).
 
 ## Installation
 
@@ -108,12 +109,12 @@ This package also adds support for google's embeddings models.
 
 ```typescript
 import { GoogleGenerativeAIEmbeddings } from "@langchain/google-genai";
-import { TaskType } from "@google/generative-ai";
 
 const embeddings = new GoogleGenerativeAIEmbeddings({
   modelName: "embedding-001", // 768 dimensions
-  taskType: TaskType.RETRIEVAL_DOCUMENT,
+  taskType: "RETRIEVAL_DOCUMENT",
   title: "Document title",
+  outputDimensionality: 256,
 });
 
 const res = await embeddings.embedQuery("OK Google");

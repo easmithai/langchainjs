@@ -3,18 +3,17 @@ import { test } from "@jest/globals";
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 
-import {
-  FileState,
-  UploadFileResponse,
-  GoogleAIFileManager,
-  GoogleAICacheManager,
-} from "@google/generative-ai/server";
+import { FileState, GoogleGenAI } from "@google/genai";
 import { ChatGoogleGenerativeAI } from "../chat_models.js";
 
 const model = new ChatGoogleGenerativeAI({
   model: "gemini-2.0-flash",
 });
-let fileResult: UploadFileResponse;
+
+const apiKey = process.env.GOOGLE_API_KEY || "";
+const ai = new GoogleGenAI({ apiKey });
+
+let uploadedFile: Awaited<ReturnType<typeof ai.files.upload>>;
 
 beforeAll(async () => {
   // Download video file and save in src/tests/data
@@ -25,48 +24,52 @@ beforeAll(async () => {
   const dirname = path.dirname(filename);
   const pathToVideoFile = path.join(dirname, "/data/Sherlock_Jr_FullMovie.mp4");
 
-  const contextCache = new GoogleAICacheManager(
-    process.env.GOOGLE_API_KEY || ""
-  );
-  const fileCache = new GoogleAIFileManager(process.env.GOOGLE_API_KEY || "");
-  fileResult = await fileCache.uploadFile(pathToVideoFile, {
-    displayName,
-    mimeType: "video/mp4",
+  uploadedFile = await ai.files.upload({
+    file: pathToVideoFile,
+    config: {
+      displayName,
+      mimeType: "video/mp4",
+    },
   });
 
-  const { name } = fileResult.file;
+  const { name } = uploadedFile;
 
   // Poll getFile() on a set interval (2 seconds here) to check file state.
-  let file = await fileCache.getFile(name);
+  let file = await ai.files.get({ name });
   while (file.state === FileState.PROCESSING) {
     // Sleep for 2 seconds
     await new Promise((resolve) => {
       setTimeout(resolve, 2_000);
     });
-    file = await fileCache.getFile(name);
+    file = await ai.files.get({ name });
   }
 
   const systemInstruction =
     "You are an expert video analyzer, and your job is to answer " +
     "the user's query based on the video file you have access to.";
-  const cachedContent = await contextCache.create({
+  const cachedContent = await ai.caches.create({
     model: "models/gemini-1.5-flash-001",
-    displayName: "gettysburg audio",
-    systemInstruction,
-    contents: [
-      {
-        role: "user",
-        parts: [
-          {
-            fileData: {
-              mimeType: fileResult.file.mimeType,
-              fileUri: fileResult.file.uri,
-            },
-          },
-        ],
+    config: {
+      displayName: "gettysburg audio",
+      ttl: "300s",
+      systemInstruction: {
+        role: "system",
+        parts: [{ text: systemInstruction }],
       },
-    ],
-    ttlSeconds: 300,
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              fileData: {
+                mimeType: uploadedFile.mimeType,
+                fileUri: uploadedFile.uri,
+              },
+            },
+          ],
+        },
+      ],
+    },
   });
 
   model.useCachedContent(cachedContent);

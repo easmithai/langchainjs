@@ -1,17 +1,14 @@
 import {
-  GenerativeModel,
-  GoogleGenerativeAI as GenerativeAI,
-  FunctionDeclarationsTool as GoogleGenerativeAIFunctionDeclarationsTool,
-  FunctionDeclaration as GenerativeAIFunctionDeclaration,
-  type FunctionDeclarationSchema as GenerativeAIFunctionDeclarationSchema,
-  GenerateContentRequest,
-  SafetySetting,
-  Part as GenerativeAIPart,
-  ModelParams,
-  RequestOptions,
+  GoogleGenAI,
+  type GenerateContentConfig,
+  type GenerateContentParameters,
+  type SafetySetting,
   type CachedContent,
-  Schema,
-} from "@google/generative-ai";
+  type FunctionDeclaration as GenerativeAIFunctionDeclaration,
+  type Tool as GenerativeAITool,
+  type Schema,
+  type Content as GoogleGenAIContent,
+} from "@google/genai";
 import { CallbackManagerForLLMRun } from "@langchain/core/callbacks/manager";
 import {
   AIMessageChunk,
@@ -198,6 +195,18 @@ export interface GoogleGenerativeAIChatInput
    */
   convertSystemMessageToHumanContent?: boolean | undefined;
 }
+
+type LegacyModelParams = {
+  model?: string;
+  systemInstruction?: GoogleGenAIContent;
+  safetySettings?: SafetySetting[];
+  generationConfig?: Partial<GenerateContentConfig>;
+};
+
+type LegacyRequestOptions = {
+  apiVersion?: string;
+  baseUrl?: string;
+};
 
 /**
  * Google Generative AI chat model integration.
@@ -622,7 +631,27 @@ export class ChatGoogleGenerativeAI
 
   convertSystemMessageToHumanContent: boolean | undefined;
 
-  private client: GenerativeModel;
+  private client: GoogleGenAI;
+
+  private apiVersion?: string;
+
+  private baseUrl?: string;
+
+  private cachedContentName?: string;
+
+  private cachedSystemInstruction?: GoogleGenAIContent;
+
+  private cachedGenerationConfig?: Partial<GenerateContentConfig>;
+
+  private initializeClient(apiVersion?: string, baseUrl?: string) {
+    this.apiVersion = apiVersion;
+    this.baseUrl = baseUrl;
+    this.client = new GoogleGenAI({
+      apiKey: this.apiKey,
+      apiVersion: this.apiVersion,
+      httpOptions: this.baseUrl ? { baseUrl: this.baseUrl } : undefined,
+    });
+  }
 
   get _isMultimodalModel() {
     return (
@@ -691,40 +720,76 @@ export class ChatGoogleGenerativeAI
     this.streaming = fields.streaming ?? this.streaming;
     this.json = fields.json;
 
-    this.client = new GenerativeAI(this.apiKey).getGenerativeModel(
-      {
-        model: this.model,
-        safetySettings: this.safetySettings as SafetySetting[],
-        generationConfig: {
-          stopSequences: this.stopSequences,
-          maxOutputTokens: this.maxOutputTokens,
-          temperature: this.temperature,
-          topP: this.topP,
-          topK: this.topK,
-          ...(this.json ? { responseMimeType: "application/json" } : {}),
-        },
-      },
-      {
-        apiVersion: fields.apiVersion,
-        baseUrl: fields.baseUrl,
-      }
-    );
+    this.initializeClient(fields.apiVersion, fields.baseUrl);
     this.streamUsage = fields.streamUsage ?? this.streamUsage;
   }
 
   useCachedContent(
     cachedContent: CachedContent,
-    modelParams?: ModelParams,
-    requestOptions?: RequestOptions
+    modelParams?: LegacyModelParams,
+    requestOptions?: LegacyRequestOptions
   ): void {
     if (!this.apiKey) return;
-    this.client = new GenerativeAI(
-      this.apiKey
-    ).getGenerativeModelFromCachedContent(
-      cachedContent,
-      modelParams,
-      requestOptions
-    );
+    this.cachedGenerationConfig = undefined;
+    this.cachedSystemInstruction = undefined;
+    if (requestOptions?.apiVersion || requestOptions?.baseUrl) {
+      this.initializeClient(
+        requestOptions?.apiVersion ?? this.apiVersion,
+        requestOptions?.baseUrl ?? this.baseUrl
+      );
+    }
+    this.cachedContentName = cachedContent.name ?? this.cachedContentName;
+    if (modelParams?.model) {
+      this.model = modelParams.model.replace(/^models\//, "");
+    }
+    if (modelParams?.safetySettings) {
+      this.safetySettings = modelParams.safetySettings;
+    }
+    if (modelParams?.systemInstruction) {
+      this.cachedSystemInstruction = modelParams.systemInstruction;
+    }
+    if (modelParams?.generationConfig) {
+      const {
+        stopSequences,
+        maxOutputTokens,
+        temperature,
+        topP,
+        topK,
+        responseMimeType,
+        responseSchema,
+        ...rest
+      } = modelParams.generationConfig;
+      if (Array.isArray(stopSequences)) {
+        this.stopSequences = stopSequences;
+      }
+      if (typeof maxOutputTokens === "number") {
+        this.maxOutputTokens = maxOutputTokens;
+      }
+      if (typeof temperature === "number") {
+        this.temperature = temperature;
+      }
+      if (typeof topP === "number") {
+        this.topP = topP;
+      }
+      if (typeof topK === "number") {
+        this.topK = topK;
+      }
+      if (responseMimeType) {
+        this.json = responseMimeType === "application/json";
+      }
+      if (responseSchema) {
+        this.cachedGenerationConfig = {
+          ...rest,
+          responseSchema,
+          responseMimeType,
+        };
+      } else if (Object.keys(rest).length > 0) {
+        this.cachedGenerationConfig = {
+          ...rest,
+          responseMimeType,
+        };
+      }
+    }
   }
 
   get useSystemInstruction(): boolean {
@@ -755,8 +820,8 @@ export class ChatGoogleGenerativeAI
       ls_provider: "google_genai",
       ls_model_name: this.model,
       ls_model_type: "chat",
-      ls_temperature: this.client.generationConfig.temperature,
-      ls_max_tokens: this.client.generationConfig.maxOutputTokens,
+      ls_temperature: this.temperature,
+      ls_max_tokens: this.maxOutputTokens,
       ls_stop: options.stop,
     };
   }
@@ -783,9 +848,58 @@ export class ChatGoogleGenerativeAI
     });
   }
 
-  invocationParams(
+  private buildGenerationConfig(
     options?: this["ParsedCallOptions"]
-  ): Omit<GenerateContentRequest, "contents"> {
+  ): GenerateContentConfig {
+    const config: GenerateContentConfig = {};
+
+    if (typeof this.temperature === "number") {
+      config.temperature = this.temperature;
+    }
+    if (typeof this.topP === "number") {
+      config.topP = this.topP;
+    }
+    if (typeof this.topK === "number") {
+      config.topK = this.topK;
+    }
+    if (typeof this.maxOutputTokens === "number") {
+      config.maxOutputTokens = this.maxOutputTokens;
+    }
+
+    const stopSequences = [...this.stopSequences];
+    const extraStops = Array.isArray(options?.stop)
+      ? options?.stop
+      : options?.stop
+        ? [options.stop]
+        : [];
+    if (extraStops.length > 0) {
+      stopSequences.push(...extraStops);
+    }
+    if (stopSequences.length > 0) {
+      config.stopSequences = stopSequences;
+    }
+
+    if (this.safetySettings && this.safetySettings.length > 0) {
+      config.safetySettings = this.safetySettings;
+    }
+
+    if (this.cachedContentName) {
+      config.cachedContent = this.cachedContentName;
+    }
+
+    if (this.cachedGenerationConfig) {
+      Object.assign(config, this.cachedGenerationConfig);
+    }
+
+    if (this.json) {
+      config.responseMimeType = "application/json";
+    }
+
+    if (options?.responseSchema) {
+      config.responseSchema = options.responseSchema;
+      config.responseMimeType = "application/json";
+    }
+
     const toolsAndConfig = options?.tools?.length
       ? convertToolsToGenAI(options.tools, {
           toolChoice: options.tool_choice,
@@ -793,22 +907,19 @@ export class ChatGoogleGenerativeAI
         })
       : undefined;
 
-    if (options?.responseSchema) {
-      this.client.generationConfig.responseSchema = options.responseSchema;
-      this.client.generationConfig.responseMimeType = "application/json";
-    } else {
-      this.client.generationConfig.responseSchema = undefined;
-      this.client.generationConfig.responseMimeType = this.json
-        ? "application/json"
-        : undefined;
+    if (toolsAndConfig?.tools) {
+      config.tools = toolsAndConfig.tools;
     }
 
-    return {
-      ...(toolsAndConfig?.tools ? { tools: toolsAndConfig.tools } : {}),
-      ...(toolsAndConfig?.toolConfig
-        ? { toolConfig: toolsAndConfig.toolConfig }
-        : {}),
-    };
+    if (toolsAndConfig?.toolConfig) {
+      config.toolConfig = toolsAndConfig.toolConfig;
+    }
+
+    if (this.cachedSystemInstruction) {
+      config.systemInstruction = this.cachedSystemInstruction;
+    }
+
+    return config;
   }
 
   async _generate(
@@ -821,18 +932,27 @@ export class ChatGoogleGenerativeAI
       this._isMultimodalModel,
       this.useSystemInstruction
     );
+    const config = this.buildGenerationConfig(options);
     let actualPrompt = prompt;
-    if (prompt[0].role === "system") {
+    if (prompt[0]?.role === "system") {
       const [systemInstruction] = prompt;
-      this.client.systemInstruction = systemInstruction;
+      config.systemInstruction = systemInstruction;
       actualPrompt = prompt.slice(1);
     }
-    const parameters = this.invocationParams(options);
+    const parameters: GenerateContentParameters = {
+      model: this.model,
+      contents: actualPrompt,
+      config,
+    };
 
     // Handle streaming
     if (this.streaming) {
       const tokenUsage: TokenUsage = {};
-      const stream = this._streamResponseChunks(messages, options, runManager);
+      const stream = this._streamResponseChunks(
+        messages,
+        options,
+        runManager
+      );
       const finalChunks: Record<number, ChatGenerationChunk> = {};
 
       for await (const chunk of stream) {
@@ -851,31 +971,20 @@ export class ChatGoogleGenerativeAI
       return { generations, llmOutput: { estimatedTokenUsage: tokenUsage } };
     }
 
-    const res = await this.completionWithRetry({
-      ...parameters,
-      contents: actualPrompt,
-    });
+    const res = await this.completionWithRetry(parameters, options);
 
     let usageMetadata: UsageMetadata | undefined;
-    if ("usageMetadata" in res.response) {
-      const genAIUsageMetadata = res.response.usageMetadata as {
-        promptTokenCount: number | undefined;
-        candidatesTokenCount: number | undefined;
-        totalTokenCount: number | undefined;
-      };
+    if (res.usageMetadata) {
       usageMetadata = {
-        input_tokens: genAIUsageMetadata.promptTokenCount ?? 0,
-        output_tokens: genAIUsageMetadata.candidatesTokenCount ?? 0,
-        total_tokens: genAIUsageMetadata.totalTokenCount ?? 0,
+        input_tokens: res.usageMetadata.promptTokenCount ?? 0,
+        output_tokens: res.usageMetadata.candidatesTokenCount ?? 0,
+        total_tokens: res.usageMetadata.totalTokenCount ?? 0,
       };
     }
 
-    const generationResult = mapGenerateContentResultToChatResult(
-      res.response,
-      {
-        usageMetadata,
-      }
-    );
+    const generationResult = mapGenerateContentResultToChatResult(res, {
+      usageMetadata,
+    });
     // may not have generations in output if there was a refusal for safety reasons, malformed function call, etc.
     if (generationResult.generations?.length > 0) {
       await runManager?.handleLLMNewToken(
@@ -895,22 +1004,22 @@ export class ChatGoogleGenerativeAI
       this._isMultimodalModel,
       this.useSystemInstruction
     );
+    const config = this.buildGenerationConfig(options);
     let actualPrompt = prompt;
-    if (prompt[0].role === "system") {
+    if (prompt[0]?.role === "system") {
       const [systemInstruction] = prompt;
-      this.client.systemInstruction = systemInstruction;
+      config.systemInstruction = systemInstruction;
       actualPrompt = prompt.slice(1);
     }
-    const parameters = this.invocationParams(options);
-    const request = {
-      ...parameters,
+    const request: GenerateContentParameters = {
+      model: this.model,
       contents: actualPrompt,
+      config,
     };
     const stream = await this.caller.callWithOptions(
       { signal: options?.signal },
       async () => {
-        const { stream } = await this.client.generateContentStream(request);
-        return stream;
+        return this.client.models.generateContentStream(request);
       }
     );
 
@@ -922,7 +1031,6 @@ export class ChatGoogleGenerativeAI
     let index = 0;
     for await (const response of stream) {
       if (
-        "usageMetadata" in response &&
         response.usageMetadata !== undefined &&
         this.streamUsage !== false &&
         options.streamUsage !== false
@@ -974,14 +1082,14 @@ export class ChatGoogleGenerativeAI
   }
 
   async completionWithRetry(
-    request: string | GenerateContentRequest | (string | GenerativeAIPart)[],
+    request: GenerateContentParameters,
     options?: this["ParsedCallOptions"]
   ) {
     return this.caller.callWithOptions(
       { signal: options?.signal },
       async () => {
         try {
-          return await this.client.generateContent(request);
+          return await this.client.models.generateContent(request);
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
         } catch (e: any) {
           // TODO: Improve error handling
@@ -1047,7 +1155,7 @@ export class ChatGoogleGenerativeAI
     let outputParser: BaseLLMOutputParser<RunOutput>;
     if (method === "functionCalling") {
       let functionName = name ?? "extract";
-      let tools: GoogleGenerativeAIFunctionDeclarationsTool[];
+      let tools: GenerativeAITool[];
       if (isInteropZodSchema(schema)) {
         const jsonSchema = schemaToGenerativeAIParameters(schema);
         tools = [
@@ -1057,7 +1165,7 @@ export class ChatGoogleGenerativeAI
                 name: functionName,
                 description:
                   jsonSchema.description ?? "A function available to call.",
-                parameters: jsonSchema as GenerativeAIFunctionDeclarationSchema,
+                parameters: jsonSchema as Schema,
               },
             ],
           },
@@ -1079,7 +1187,7 @@ export class ChatGoogleGenerativeAI
           geminiFunctionDefinition = schema as GenerativeAIFunctionDeclaration;
           geminiFunctionDefinition.parameters = removeAdditionalProperties(
             schema.parameters
-          ) as GenerativeAIFunctionDeclarationSchema;
+          ) as Schema;
           functionName = schema.name;
         } else {
           geminiFunctionDefinition = {
@@ -1087,7 +1195,7 @@ export class ChatGoogleGenerativeAI
             description: schema.description ?? "",
             parameters: removeAdditionalProperties(
               schema
-            ) as GenerativeAIFunctionDeclarationSchema,
+            ) as Schema,
           };
         }
         tools = [

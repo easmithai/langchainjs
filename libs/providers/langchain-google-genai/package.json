@@ -31,7 +31,7 @@
     "format:check": "prettier --config .prettierrc --check \"src\""
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.0",
+    "@google/genai": "1.25.0",
     "uuid": "^11.1.0"
   },
   "peerDependencies": {
