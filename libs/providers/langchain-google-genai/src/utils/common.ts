@@ -1,15 +1,11 @@
 import {
-  EnhancedGenerateContentResponse,
+  GenerateContentResponse,
   Content,
   Part,
-  type FunctionDeclarationsTool as GoogleGenerativeAIFunctionDeclarationsTool,
   type FunctionDeclaration as GenerativeAIFunctionDeclaration,
-  POSSIBLE_ROLES,
-  FunctionCallPart,
-  TextPart,
-  FileDataPart,
-  InlineDataPart,
-} from "@google/generative-ai";
+  type Tool as GenerativeAITool,
+  type FunctionCall,
+} from "@google/genai";
 import {
   AIMessage,
   AIMessageChunk,
@@ -43,6 +39,13 @@ import {
 } from "./zod_to_genai_parameters.js";
 import { GoogleGenerativeAIToolType } from "../types.js";
 
+type PossibleRole = "user" | "model" | "system" | "function";
+
+type TextPart = Part & { text: string };
+type FileDataPart = Part & { fileData: { mimeType: string; fileUri?: string } };
+type InlineDataPart = Part & { inlineData: { mimeType: string; data: string } };
+type FunctionCallPart = Part & { functionCall: FunctionCall };
+
 export function getMessageAuthor(message: BaseMessage) {
   const type = message._getType();
   if (ChatMessage.isInstance(message)) {
@@ -62,7 +65,7 @@ export function getMessageAuthor(message: BaseMessage) {
  */
 export function convertAuthorToRole(
   author: string
-): (typeof POSSIBLE_ROLES)[number] {
+): PossibleRole {
   switch (author) {
     /**
      *  Note: Gemini currently is not supporting system messages
@@ -478,7 +481,7 @@ export function convertBaseMessagesToContent(
 }
 
 export function mapGenerateContentResultToChatResult(
-  response: EnhancedGenerateContentResponse,
+  response: GenerateContentResponse,
   extra?: {
     usageMetadata: UsageMetadata | undefined;
   }
@@ -497,7 +500,7 @@ export function mapGenerateContentResultToChatResult(
     };
   }
 
-  const functionCalls = response.functionCalls();
+  const functionCalls = response.functionCalls;
   const [candidate] = response.candidates;
   const { content: candidateContent, ...generationInfo } = candidate;
   let content: MessageContent | undefined;
@@ -598,7 +601,7 @@ export function mapGenerateContentResultToChatResult(
 }
 
 export function convertResponseContentToChatGenerationChunk(
-  response: EnhancedGenerateContentResponse,
+  response: GenerateContentResponse,
   extra: {
     usageMetadata?: UsageMetadata | undefined;
     index: number;
@@ -607,7 +610,7 @@ export function convertResponseContentToChatGenerationChunk(
   if (!response.candidates || response.candidates.length === 0) {
     return null;
   }
-  const functionCalls = response.functionCalls();
+  const functionCalls = response.functionCalls;
   const [candidate] = response.candidates;
   const { content: candidateContent, ...generationInfo } = candidate;
   let content: MessageContent | undefined;
@@ -705,7 +708,7 @@ export function convertResponseContentToChatGenerationChunk(
 
 export function convertToGenerativeAITools(
   tools: GoogleGenerativeAIToolType[]
-): GoogleGenerativeAIFunctionDeclarationsTool[] {
+): GenerativeAITool[] {
   if (
     tools.every(
       (tool) =>
@@ -713,7 +716,7 @@ export function convertToGenerativeAITools(
         Array.isArray(tool.functionDeclarations)
     )
   ) {
-    return tools as GoogleGenerativeAIFunctionDeclarationsTool[];
+    return tools as GenerativeAITool[];
   }
   return [
     {

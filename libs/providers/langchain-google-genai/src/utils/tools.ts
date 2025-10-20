@@ -1,11 +1,10 @@
 import {
   Tool as GenerativeAITool,
   ToolConfig,
-  FunctionCallingMode,
+  FunctionCallingConfigMode,
   FunctionDeclaration,
-  FunctionDeclarationsTool,
-  FunctionDeclarationSchema,
-} from "@google/generative-ai";
+  Schema,
+} from "@google/genai";
 import { ToolChoice } from "@langchain/core/language_models/chat_models";
 import { StructuredToolInterface } from "@langchain/core/tools";
 import { isLangChainTool } from "@langchain/core/utils/function_calling";
@@ -97,9 +96,7 @@ function processTools(tools: GoogleGenerativeAIToolType[]): GenerativeAITool[] {
   ];
 }
 
-function convertOpenAIToolToGenAI(
-  tool: ToolDefinition
-): FunctionDeclarationsTool {
+function convertOpenAIToolToGenAI(tool: ToolDefinition): GenerativeAITool {
   return {
     functionDeclarations: [
       {
@@ -107,7 +104,7 @@ function convertOpenAIToolToGenAI(
         description: tool.function.description,
         parameters: removeAdditionalProperties(
           tool.function.parameters
-        ) as FunctionDeclarationSchema,
+        ) as Schema,
       },
     ],
   };
@@ -124,16 +121,18 @@ function createToolConfig(
 
   const { toolChoice, allowedFunctionNames } = extra;
 
-  const modeMap: Record<string, FunctionCallingMode> = {
-    any: FunctionCallingMode.ANY,
-    auto: FunctionCallingMode.AUTO,
-    none: FunctionCallingMode.NONE,
+  const modeMap: Record<string, FunctionCallingConfigMode> = {
+    any: FunctionCallingConfigMode.ANY,
+    auto: FunctionCallingConfigMode.AUTO,
+    none: FunctionCallingConfigMode.NONE,
   };
 
   if (toolChoice && ["any", "auto", "none"].includes(toolChoice as string)) {
     return {
       functionCallingConfig: {
-        mode: modeMap[toolChoice as keyof typeof modeMap] ?? "MODE_UNSPECIFIED",
+        mode:
+          modeMap[toolChoice as keyof typeof modeMap] ??
+          FunctionCallingConfigMode.MODE_UNSPECIFIED,
         allowedFunctionNames,
       },
     };
@@ -142,7 +141,7 @@ function createToolConfig(
   if (typeof toolChoice === "string" || allowedFunctionNames) {
     return {
       functionCallingConfig: {
-        mode: FunctionCallingMode.ANY,
+        mode: FunctionCallingConfigMode.ANY,
         allowedFunctionNames: [
           ...(allowedFunctionNames ?? []),
           ...(toolChoice && typeof toolChoice === "string" ? [toolChoice] : []),

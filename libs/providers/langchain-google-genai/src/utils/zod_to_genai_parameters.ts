@@ -1,7 +1,4 @@
-import {
-  type FunctionDeclarationSchema as GenerativeAIFunctionDeclarationSchema,
-  type SchemaType as FunctionDeclarationSchemaType,
-} from "@google/generative-ai";
+import type { Schema as GenerativeAISchema, Type as GenerativeAISchemaType } from "@google/genai";
 import {
   InteropZodType,
   isInteropZodSchema,
@@ -13,7 +10,7 @@ import {
 
 export interface GenerativeAIJsonSchema extends Record<string, unknown> {
   properties?: Record<string, GenerativeAIJsonSchema>;
-  type: FunctionDeclarationSchemaType;
+  type?: GenerativeAISchemaType;
 }
 
 export interface GenerativeAIJsonSchemaDirty extends GenerativeAIJsonSchema {
@@ -59,7 +56,7 @@ export function schemaToGenerativeAIParameters<
   RunOutput extends Record<string, any> = Record<string, any>
 >(
   schema: InteropZodType<RunOutput> | JsonSchema7Type
-): GenerativeAIFunctionDeclarationSchema {
+): GenerativeAISchema {
   // GenerativeAI doesn't accept either the $schema or additionalProperties
   // attributes, so we need to explicitly remove them.
   const jsonSchema = removeAdditionalProperties(
@@ -67,13 +64,13 @@ export function schemaToGenerativeAIParameters<
   );
   const { $schema, ...rest } = jsonSchema;
 
-  return rest as GenerativeAIFunctionDeclarationSchema;
+  return rest as GenerativeAISchema;
 }
 
 export function jsonSchemaToGeminiParameters(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   schema: Record<string, any>
-): GenerativeAIFunctionDeclarationSchema {
+): GenerativeAISchema {
   // Gemini doesn't accept either the $schema or additionalProperties
   // attributes, so we need to explicitly remove them.
   const jsonSchema = removeAdditionalProperties(
@@ -81,5 +78,5 @@ export function jsonSchemaToGeminiParameters(
   );
   const { $schema, ...rest } = jsonSchema;
 
-  return rest as GenerativeAIFunctionDeclarationSchema;
+  return rest as GenerativeAISchema;
 }

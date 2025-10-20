@@ -1,5 +1,5 @@
-import { GoogleGenerativeAI, GenerativeModel } from "@google/generative-ai";
-import type { TaskType, EmbedContentRequest } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
+import type { EmbedContentConfig } from "@google/genai";
 import { getEnvironmentVariable } from "@langchain/core/utils/env";
 import { Embeddings, EmbeddingsParams } from "@langchain/core/embeddings";
 import { chunkArray } from "@langchain/core/utils/chunk_array";
@@ -8,6 +8,17 @@ import { chunkArray } from "@langchain/core/utils/chunk_array";
  * Interface that extends EmbeddingsParams and defines additional
  * parameters specific to the GoogleGenerativeAIEmbeddings class.
  */
+export type GoogleGenerativeAIEmbeddingsTaskType =
+  | "RETRIEVAL_QUERY"
+  | "RETRIEVAL_DOCUMENT"
+  | "SEMANTIC_SIMILARITY"
+  | "CLASSIFICATION"
+  | "CLUSTERING"
+  | "QUESTION_ANSWERING"
+  | "FACT_VERIFICATION"
+  | "CODE_RETRIEVAL_QUERY"
+  | string;
+
 export interface GoogleGenerativeAIEmbeddingsParams extends EmbeddingsParams {
   /**
    * Model Name to use
@@ -29,15 +40,20 @@ export interface GoogleGenerativeAIEmbeddingsParams extends EmbeddingsParams {
    *
    * Note: currently only supported by `embedding-001` model
    */
-  taskType?: TaskType;
+  taskType?: GoogleGenerativeAIEmbeddingsTaskType;
 
   /**
-   * An optional title for the text. Only applicable when TaskType is
+   * An optional title for the text. Only applicable when taskType is
    * `RETRIEVAL_DOCUMENT`
    *
    * Note: currently only supported by `embedding-001` model
    */
   title?: string;
+
+  /**
+   * Optional reduced dimensionality for the output embedding when supported.
+   */
+  outputDimensionality?: number;
 
   /**
    * Whether to strip new lines from the input text. Default to true
@@ -86,15 +102,17 @@ export class GoogleGenerativeAIEmbeddings
 
   model = "embedding-001";
 
-  taskType?: TaskType;
+  taskType?: GoogleGenerativeAIEmbeddingsTaskType;
 
   title?: string;
+
+  outputDimensionality?: number;
 
   stripNewLines = true;
 
   maxBatchSize = 100; // Max batch size for embedDocuments set by GenerativeModel client's batchEmbedContents call
 
-  private client: GenerativeModel;
+  private client: GoogleGenAI;
 
   constructor(fields?: GoogleGenerativeAIEmbeddingsParams) {
     super(fields ?? {});
@@ -109,9 +127,11 @@ export class GoogleGenerativeAIEmbeddings
 
     this.title = fields?.title ?? this.title;
 
+    this.outputDimensionality = fields?.outputDimensionality ?? this.outputDimensionality;
+
     if (this.title && this.taskType !== "RETRIEVAL_DOCUMENT") {
       throw new Error(
-        "title can only be sepcified with TaskType.RETRIEVAL_DOCUMENT"
+        "title can only be specified when taskType is set to 'RETRIEVAL_DOCUMENT'"
       );
     }
 
@@ -125,29 +145,38 @@ export class GoogleGenerativeAIEmbeddings
       );
     }
 
-    this.client = new GoogleGenerativeAI(this.apiKey).getGenerativeModel(
-      {
-        model: this.model,
-      },
-      {
-        baseUrl: fields?.baseUrl,
-      }
-    );
+    this.client = new GoogleGenAI({
+      apiKey: this.apiKey,
+      httpOptions: fields?.baseUrl ? { baseUrl: fields.baseUrl } : undefined,
+    });
   }
 
-  private _convertToContent(text: string): EmbedContentRequest {
+  private _cleanText(text: string): string {
     const cleanedText = this.stripNewLines ? text.replace(/\n/g, " ") : text;
-    return {
-      content: { role: "user", parts: [{ text: cleanedText }] },
-      taskType: this.taskType,
-      title: this.title,
-    };
+    return cleanedText;
+  }
+
+  private _embedConfig(): EmbedContentConfig | undefined {
+    const config: EmbedContentConfig = {};
+    if (this.taskType) {
+      config.taskType = this.taskType;
+    }
+    if (this.title) {
+      config.title = this.title;
+    }
+    if (typeof this.outputDimensionality === "number") {
+      config.outputDimensionality = this.outputDimensionality;
+    }
+    return Object.keys(config).length > 0 ? config : undefined;
   }
 
   protected async _embedQueryContent(text: string): Promise<number[]> {
-    const req = this._convertToContent(text);
-    const res = await this.client.embedContent(req);
-    return res.embedding.values ?? [];
+    const res = await this.client.models.embedContent({
+      model: this.model,
+      contents: [this._cleanText(text)],
+      config: this._embedConfig(),
+    });
+    return res.embeddings?.[0]?.values ?? [];
   }
 
   protected async _embedDocumentsContent(
@@ -158,17 +187,19 @@ export class GoogleGenerativeAIEmbeddings
       this.maxBatchSize
     );
 
-    const batchEmbedRequests = batchEmbedChunks.map((chunk) => ({
-      requests: chunk.map((doc) => this._convertToContent(doc)),
-    }));
-
     const responses = await Promise.allSettled(
-      batchEmbedRequests.map((req) => this.client.batchEmbedContents(req))
+      batchEmbedChunks.map((chunk) =>
+        this.client.models.embedContent({
+          model: this.model,
+          contents: chunk.map((doc) => this._cleanText(doc)),
+          config: this._embedConfig(),
+        })
+      )
     );
 
     const embeddings = responses.flatMap((res, idx) => {
       if (res.status === "fulfilled") {
-        return res.value.embeddings.map((e) => e.values || []);
+        return res.value.embeddings?.map((e) => e.values || []) ?? [];
       } else {
         return Array(batchEmbedChunks[idx].length).fill([]);
       }

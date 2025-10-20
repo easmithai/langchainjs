@@ -16,11 +16,10 @@ import {
 import { StructuredTool, tool } from "@langchain/core/tools";
 import { z } from "zod/v3";
 import {
-  CodeExecutionTool,
-  DynamicRetrievalMode,
-  SchemaType as FunctionDeclarationSchemaType,
-  GoogleSearchRetrievalTool,
-} from "@google/generative-ai";
+  Tool,
+  DynamicRetrievalConfigMode,
+  Type as FunctionDeclarationSchemaType,
+} from "@google/genai";
 import { concat } from "@langchain/core/utils/stream";
 import { ChatGoogleGenerativeAI } from "../chat_models.js";
 
@@ -597,10 +596,10 @@ test("Supports tool_choice", async () => {
 
 describe("GoogleSearchRetrievalTool", () => {
   test("Supports GoogleSearchRetrievalTool", async () => {
-    const searchRetrievalTool: GoogleSearchRetrievalTool = {
+    const searchRetrievalTool: Tool = {
       googleSearchRetrieval: {
         dynamicRetrievalConfig: {
-          mode: DynamicRetrievalMode.MODE_DYNAMIC,
+          mode: DynamicRetrievalConfigMode.MODE_DYNAMIC,
           dynamicThreshold: 0.7, // default is 0.7
         },
       },
@@ -618,10 +617,10 @@ describe("GoogleSearchRetrievalTool", () => {
   });
 
   test("Can stream GoogleSearchRetrievalTool", async () => {
-    const searchRetrievalTool: GoogleSearchRetrievalTool = {
+    const searchRetrievalTool: Tool = {
       googleSearchRetrieval: {
         dynamicRetrievalConfig: {
-          mode: DynamicRetrievalMode.MODE_DYNAMIC,
+          mode: DynamicRetrievalConfigMode.MODE_DYNAMIC,
           dynamicThreshold: 0.7, // default is 0.7
         },
       },
@@ -647,7 +646,7 @@ describe("GoogleSearchRetrievalTool", () => {
 
 describe("CodeExecutionTool", () => {
   test("Supports CodeExecutionTool", async () => {
-    const codeExecutionTool: CodeExecutionTool = {
+    const codeExecutionTool: Tool = {
       codeExecution: {}, // Simply pass an empty object to enable it.
     };
     const model = new ChatGoogleGenerativeAI({
@@ -680,7 +679,7 @@ describe("CodeExecutionTool", () => {
   });
 
   test("CodeExecutionTool contents can be passed in chat history", async () => {
-    const codeExecutionTool: CodeExecutionTool = {
+    const codeExecutionTool: Tool = {
       codeExecution: {}, // Simply pass an empty object to enable it.
     };
     const model = new ChatGoogleGenerativeAI({
@@ -707,7 +706,7 @@ describe("CodeExecutionTool", () => {
   });
 
   test("Can stream CodeExecutionTool", async () => {
-    const codeExecutionTool: CodeExecutionTool = {
+    const codeExecutionTool: Tool = {
       codeExecution: {}, // Simply pass an empty object to enable it.
     };
     const model = new ChatGoogleGenerativeAI({
